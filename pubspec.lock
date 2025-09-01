@@ -925,6 +925,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.0"
+  video_frame_extractor:
+    dependency: "direct main"
+    description:
+      name: video_frame_extractor
+      sha256: "7011e7f6a0b3202389223a75bc50f9fd45fdf4a2a5c7e5b2bd59ac0a61eb005f"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.3"
   video_player:
     dependency: "direct main"
     description:

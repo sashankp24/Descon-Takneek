@@ -69,12 +69,13 @@ dependencies:
   pdfx: ^2.6.0
   video_thumbnail: ^0.5.0
   open_filex: ^4.3.2
-  image: ^4.0.15
+  image: ^4.5.4
   flutter_image_compress: ^2.2.0
   collection: ^1.17.0
   logger: ^1.1.0
   async: ^2.11.0
   http: ^1.1.0
+  video_frame_extractor: ^0.0.3
 
 dev_dependencies:
   flutter_test:
@@ -84,7 +85,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/road_distress_model.tflite
+    - assets/road_distress_float.tflite
     - assets/labels.txt
     - assets/guide.pdf
     - assets/documentation.pdf

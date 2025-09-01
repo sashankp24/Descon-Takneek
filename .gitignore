@@ -1,0 +1,44 @@
+# Flutter/Dart/Pub related
+.dart_tool/
+.packages
+.pub/
+build/
+flutter_*.png
+app.*.symbols
+Images/
+
+# Obfuscation and symbol files
+app.*.map.json
+
+# Android related
+android/.gradle/
+android/app/build/
+android/local.properties
+android/key.properties
+*.keystore
+
+# iOS related
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/ServiceDefinitions.json
+ios/Runner/GeneratedPluginRegistrant.*
+
+# Xcode
+**/DerivedData/
+*.xcworkspace
+*.xcuserdata
+*.xcuserstate
+
+# VS Code
+.vscode/
+
+# IntelliJ / Android Studio
+.idea/
+
+# Misc
+*.log
+*.tmp
+*.swp
+.DS_Store
