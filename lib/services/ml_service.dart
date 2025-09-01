@@ -9,6 +9,13 @@ class MLService {
 
   static const int _inputSize = 256;
 
+  String? getLabelForIndex(int index) {
+    if (index >= 0 && index < _labels.length) {
+      return _labels[index];
+    }
+    return null;
+  }
+
   Future<bool> loadModel() async {
     try {
       _interpreter =
@@ -65,29 +72,26 @@ class MLService {
     return imageBytes;
   }
 
-  Map<String, dynamic> analyzeImage(img.Image image) {
-    if (_interpreter == null || _labels.isEmpty) {
-      return {'quantification': <String, int>{}};
-    }
+  Map<String, dynamic>? analyzeImage(img.Image image) {
+    if (_interpreter == null || _labels.isEmpty) return null;
 
-    // This uses the Float32 preprocessing for your float16 model
     final inputTensor =
         _preprocess(image).reshape([1, _inputSize, _inputSize, 3]);
-
     final outputShape = [1, _inputSize, _inputSize, _labels.length];
-    final outputBuffer = List.generate(
-      outputShape.reduce((a, b) => a * b),
-      (_) => 0.0,
-    ).reshape(outputShape);
+    final outputBuffer =
+        List.generate(outputShape.reduce((a, b) => a * b), (_) => 0.0)
+            .reshape(outputShape);
 
     _interpreter!.run(inputTensor, outputBuffer);
 
-    final Map<String, int> classCounts = {};
-    for (var label in _labels) {
-      classCounts[label] = 0; // Initialize all counts to 0
-    }
-
+    final Map<String, int> classCounts = {for (var label in _labels) label: 0};
     final outputList = outputBuffer[0];
+
+    // --- NEW: Create a simple integer mask for the overlay function ---
+    final predictionMask =
+        List.generate(_inputSize, (_) => List.generate(_inputSize, (_) => [0]));
+
+    const double confidenceThreshold = 0.5;
 
     for (int y = 0; y < _inputSize; y++) {
       for (int x = 0; x < _inputSize; x++) {
@@ -100,12 +104,17 @@ class MLService {
             dominantClassIndex = c;
           }
         }
+
+        if (maxScore < confidenceThreshold) {
+          dominantClassIndex = 0;
+        }
+
         final label = _labels[dominantClassIndex];
         classCounts[label] = (classCounts[label] ?? 0) + 1;
+        predictionMask[y][x][0] = dominantClassIndex;
       }
     }
 
-    // Return the map of pixel counts for this single frame.
-    return {'quantification': classCounts};
+    return {'quantification': classCounts, 'mask': predictionMask};
   }
 }

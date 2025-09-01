@@ -17,69 +17,139 @@ import '../widgets/action_buttons.dart';
 import '../widgets/report_list_item.dart';
 import '../utils/app_constants.dart';
 
+Future<String> _createOverlayImage({
+  required String framePath,
+  required List<List<List<int>>> predictionMask, // The 256x256 mask
+  required String tempDirPath,
+  required String defectName,
+  required MLService mlService,
+}) async {
+  final frameBytes = await File(framePath).readAsBytes();
+  final resizedFrame = image_lib.decodeImage(frameBytes)!; // Use the original frame directly
+
+  final colors = {
+    "Pothole": image_lib.ColorRgba8(255, 0, 0, 128), // Red with 50% transparency
+    "Crack": image_lib.ColorRgba8(0, 255, 0, 128),   // Green with 50% transparency
+    "Rutting": image_lib.ColorRgba8(0, 0, 255, 128), // Blue with 50% transparency
+    "Ravelling": image_lib.ColorRgba8(255, 255, 0, 128), // Yellow with 50% transparency
+  };
+
+  // Draw the colored pixels directly onto the frame
+  for (int y = 0; y < 256; y++) {
+    for (int x = 0; x < 256; x++) {
+      final classIndex = predictionMask[y][x][0];
+      final className = mlService.getLabelForIndex(classIndex);
+      // Only draw if it's a defect (not Background)
+      if (className != null && className != "Background") {
+        image_lib.drawPixel(resizedFrame, x, y, colors[className]!);
+      }
+    }
+  }
+
+  final overlayPath = '$tempDirPath/keyframe_${defectName}.png';
+  await File(overlayPath).writeAsBytes(image_lib.encodePng(resizedFrame));
+  return overlayPath;
+}
+
 class _IsolateParams {
   final List<String> framePaths;
+  final String tempDirPath;
   final Uint8List modelData;
   final String labelsData;
 
-  _IsolateParams(this.framePaths, this.modelData, this.labelsData);
+  _IsolateParams(
+      this.framePaths, this.modelData, this.labelsData, this.tempDirPath);
 }
 
-Future<Map<String, dynamic>> _analyzeVideoInIsolate(_IsolateParams params) async {
+Future<Map<String, dynamic>> _analyzeVideoInIsolate(
+    _IsolateParams params) async {
   final mlService = MLService();
-  final isModelLoaded = await mlService.loadFromBuffer(
+  final isModelLoaded = mlService.loadFromBuffer(
       modelBuffer: params.modelData, labelsData: params.labelsData);
+  if (!isModelLoaded) throw Exception('Failed to load model in isolate.');
 
-  if (!isModelLoaded) {
-    throw Exception('Failed to load ML model in the background isolate.');
-  }
+  // --- Analysis Variables ---
+  final Map<String, double> totalPixelPercentages = {};
+  final Map<String, Map<String, dynamic>> keyFrames =
+      {}; // { "Pothole": {"percentage": 0.5, "path": "..."} }
 
-  Map<String, int> totalQuantification = {};
-  int maxDistressPixels = 0;
-  String? worstFramePath;
+  int framesProcessed = 0;
 
   for (final String framePath in params.framePaths) {
+    framesProcessed++;
     final frameFile = File(framePath);
     final imageBytes = await frameFile.readAsBytes();
     final image = image_lib.decodeImage(imageBytes);
 
     if (image != null) {
-      // AnalyzeImage now needs to return the full pixel count map.
       final analysisResult = mlService.analyzeImage(image);
+      if (analysisResult == null) continue;
+
       final pixelCounts = analysisResult['quantification'] as Map<String, int>;
-      
-      int currentFrameDistressPixels = 0;
-      pixelCounts.forEach((key, value) {
-        totalQuantification[key] = (totalQuantification[key] ?? 0) + value;
-        if (key.toLowerCase() != 'background') {
-          currentFrameDistressPixels += value;
+      final predictionMask =
+          analysisResult['mask'] as List<List<List<int>>>; // Get the raw mask
+
+      pixelCounts.forEach((label, count) {
+        if (label.toLowerCase() != 'background') {
+          double percentage = (count / (256 * 256)) * 100;
+          totalPixelPercentages[label] =
+              (totalPixelPercentages[label] ?? 0) + percentage;
+
+          // Check if this is the best frame for this defect
+          if (percentage > (keyFrames[label]?['percentage'] ?? 0)) {
+            keyFrames[label] = {
+              'percentage': percentage,
+              'path': framePath,
+              'mask': predictionMask
+            };
+          }
         }
       });
-
-      if (currentFrameDistressPixels > maxDistressPixels) {
-        maxDistressPixels = currentFrameDistressPixels;
-        worstFramePath = framePath;
-      } else {
-        // Delete non-worst frames immediately to save space.
-        await frameFile.delete();
-      }
     }
   }
 
-  // Determine the final result.
-  String finalDetection = "No distress detected";
-  int maxCount = 0;
-  totalQuantification.forEach((key, value) {
-    if (key.toLowerCase() != 'background' && value > maxCount) {
-      maxCount = value;
-      finalDetection = key;
+  // --- Finalize Results ---
+  final Map<String, double> averagePercentages = {};
+  totalPixelPercentages.forEach((label, totalPercentage) {
+    averagePercentages[label] = totalPercentage / framesProcessed;
+  });
+
+  String finalAssessment = "No significant distress detected";
+  double maxAvgPercentage = 0.01; // Threshold to be considered significant
+  averagePercentages.forEach((label, avg) {
+    if (avg > maxAvgPercentage) {
+      maxAvgPercentage = avg;
+      finalAssessment = label;
     }
   });
 
+  // Create overlay images for the identified key frames
+  final Map<String, String> keyFramePaths = {};
+  for (var entry in keyFrames.entries) {
+    final label = entry.key;
+    final data = entry.value;
+    final overlayPath = await _createOverlayImage(
+      framePath: data['path'],
+      predictionMask: data['mask'],
+      tempDirPath: params.tempDirPath,
+      defectName: label,
+      mlService: mlService,
+    );
+    keyFramePaths[label] = overlayPath;
+  }
+
+  // Clean up original frames that are not key frames
+  final usedPaths = keyFrames.values.map((d) => d['path'] as String).toSet();
+  for (final framePath in params.framePaths) {
+    if (!usedPaths.contains(framePath)) {
+      await File(framePath).delete();
+    }
+  }
+
   return {
-    'final_detection': finalDetection,
-    'quantification': totalQuantification,
-    'worst_frame_path': worstFramePath,
+    'final_assessment': finalAssessment,
+    'average_percentages': averagePercentages,
+    'key_frame_paths': keyFramePaths,
   };
 }
 
@@ -152,31 +222,37 @@ class _HomePageState extends State<HomePage> {
     try {
       final analysisResult = await _analyzeVideo(videoFile.path);
 
-      final detectionResult = analysisResult['final_detection'] as String;
-      final quantification = analysisResult['quantification'] as Map<String, int>;
-      final worstFramePath = analysisResult['worst_frame_path'] as String?;
+      final finalAssessment = analysisResult['final_assessment'] as String;
+      final averagePercentages =
+          analysisResult['average_percentages'] as Map<String, double>;
+      final keyFramePaths =
+          analysisResult['key_frame_paths'] as Map<String, String>;
 
+      // 3. Create the final report object with the new detailed data.
       final finalReport = DistressReport(
         videoPath: videoFile.path,
         thumbnailPath: thumbnailPath,
         position: position,
-        detectionResult: detectionResult,
-        quantification: quantification,
-        worstFramePath: worstFramePath, // Pass the new data
+        finalAssessment: finalAssessment,
+        averagePercentages: averagePercentages,
+        keyFramePaths: keyFramePaths,
         status: ReportStatus.complete,
       );
 
+      // 4. Generate the PDF report using the rich data.
       final reportPath = await _fileService.generateReport(finalReport);
-      
-      final reportIndex = _reports.indexWhere((r) => r.videoPath == videoFile.path);
+
+      // 5. Find the initial report in our list and update it with the final data.
+      final reportIndex =
+          _reports.indexWhere((r) => r.videoPath == videoFile.path);
       if (reportIndex != -1 && mounted) {
         setState(() {
-          _reports[reportIndex]
-            ..reportPath = reportPath
-            ..detectionResult = detectionResult
-            ..quantification = quantification
-            ..worstFramePath = worstFramePath
-            ..status = ReportStatus.complete;
+          final reportToUpdate = _reports[reportIndex];
+          reportToUpdate.reportPath = reportPath;
+          reportToUpdate.finalAssessment = finalAssessment;
+          reportToUpdate.averagePercentages = averagePercentages;
+          reportToUpdate.keyFramePaths = keyFramePaths;
+          reportToUpdate.status = ReportStatus.complete;
         });
       }
     } catch (e) {
@@ -198,7 +274,7 @@ class _HomePageState extends State<HomePage> {
       imagesCount: 15,
     );
     return await compute(_analyzeVideoInIsolate,
-        _IsolateParams(framePaths, _modelData!, _labelsData!));
+        _IsolateParams(framePaths, _modelData!, _labelsData!, tempDir.path));
   }
 
   void _showErrorSnackbar(String message) {

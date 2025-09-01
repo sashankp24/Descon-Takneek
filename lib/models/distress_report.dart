@@ -11,8 +11,12 @@ class DistressReport {
   final Position? position;
   String? detectionResult;
   ReportStatus status;
+  String? finalAssessment;
 
   Map<String, int>? quantification;
+
+  Map<String, double>? averagePercentages;
+  Map<String, String>? keyFramePaths;
 
   String? worstFramePath;
 
@@ -21,9 +25,9 @@ class DistressReport {
     this.thumbnailPath,
     this.reportPath,
     this.position,
-    this.detectionResult,
     this.status = ReportStatus.complete,
-    this.quantification,
-    this.worstFramePath,
+    this.finalAssessment,
+    this.averagePercentages,
+    this.keyFramePaths,
   });
 }

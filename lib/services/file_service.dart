@@ -10,62 +10,87 @@ import '../models/distress_report.dart';
 class FileService {
   Future<String> generateReport(DistressReport report) async {
     final pdf = pw.Document();
-    pw.MemoryImage? worstFrameImage;
-    if (report.worstFramePath != null) {
-      final imageBytes = await File(report.worstFramePath!).readAsBytes();
-      worstFrameImage = pw.MemoryImage(imageBytes);
-      await File(report.worstFramePath!).delete();
+
+    final List<pw.Widget> keyFrameWidgets = [];
+    if (report.keyFramePaths != null) {
+      for (var entry in report.keyFramePaths!.entries) {
+        final label = entry.key;
+        final path = entry.value;
+        final imageBytes = await File(path).readAsBytes();
+        final image = pw.MemoryImage(imageBytes);
+
+        keyFrameWidgets.add(pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(label,
+                  style: pw.TextStyle(
+                      fontSize: 16, fontWeight: pw.FontWeight.bold)),
+              pw.SizedBox(height: 5),
+              pw.Container(height: 250, child: pw.Image(image)),
+              pw.SizedBox(height: 15),
+            ]));
+        await File(path).delete(); // Clean up the key frame
+      }
     }
+
     pdf.addPage(
-      pw.MultiPage( // Use MultiPage to prevent overflow
+      pw.MultiPage(
+        header: (context) => pw.Text("Road Distress Report",
+            style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
         build: (context) => [
-          pw.Text("Road Distress Report", style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
           pw.Divider(thickness: 2),
           pw.SizedBox(height: 20),
 
           // Summary Section
-          pw.Text("Summary", style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+          pw.Text("Summary",
+              style:
+                  pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
           pw.SizedBox(height: 10),
           pw.Text("Date: ${DateTime.now().toLocal().toString().split(' ')[0]}"),
-          pw.Text("Video: ${report.videoPath.split('/').last}"),
-          if (report.position != null) ...[
-            pw.Text("Latitude: ${report.position!.latitude}"),
-            pw.Text("Longitude: ${report.position!.longitude}"),
-          ],
+          if (report.position != null)
+            pw.Text(
+                "GPS: ${report.position!.latitude.toStringAsFixed(4)}, ${report.position!.longitude.toStringAsFixed(4)}"),
           pw.SizedBox(height: 10),
-          pw.Text("Final Assessment: ${report.detectionResult ?? 'N/A'}", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14)),
-          pw.SizedBox(height: 20),
-          
-          // --- NEW: Quantification Section ---
-          pw.Text("Quantification Details", style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
-          pw.SizedBox(height: 10),
-          if (report.quantification != null && report.quantification!.isNotEmpty)
-            pw.Table.fromTextArray(
-              headers: ['Distress Type', 'Pixel Count'],
-              data: report.quantification!.entries
-                .where((e) => e.key.toLowerCase() != 'background' && e.value > 0)
-                .map((e) => [e.key, e.value.toString()])
-                .toList(),
-            )
-          else
-            pw.Text("No distress pixels were detected."),
+          pw.Text("Final Assessment: ${report.finalAssessment ?? 'N/A'}",
+              style:
+                  pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14)),
           pw.SizedBox(height: 20),
 
-          // --- NEW: Image Evidence Section ---
-          if (worstFrameImage != null) ...[
-            pw.Text("Visual Evidence", style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+          // Quantification Section
+          pw.Text("Overall Distress Presence",
+              style:
+                  pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+          pw.SizedBox(height: 10),
+          if (report.averagePercentages != null &&
+              report.averagePercentages!.entries.any((e) => e.value > 0))
+            pw.Table.fromTextArray(
+              headers: ['Distress Type', 'Average Presence in Video'],
+              data: report.averagePercentages!.entries
+                  .where(
+                      (e) => e.value > 0.01) // Only show significant findings
+                  .map((e) => [e.key, "${e.value.toStringAsFixed(2)}%"])
+                  .toList(),
+            )
+          else
+            pw.Text("No significant distress was detected."),
+          pw.SizedBox(height: 20),
+
+          // Key Frame Evidence Section
+          if (keyFrameWidgets.isNotEmpty) ...[
+            pw.NewPage(),
+            pw.Text("Visual Evidence (Key Frames)",
+                style:
+                    pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
             pw.SizedBox(height: 10),
-            pw.Container(
-              height: 300,
-              child: pw.Image(worstFrameImage),
-            ),
+            ...keyFrameWidgets,
           ]
         ],
       ),
     );
 
     final dir = await getApplicationDocumentsDirectory();
-    final file = File("${dir.path}/report_${DateTime.now().millisecondsSinceEpoch}.pdf");
+    final file =
+        File("${dir.path}/report_${DateTime.now().millisecondsSinceEpoch}.pdf");
     await file.writeAsBytes(await pdf.save());
     return file.path;
   }
